@@ -169,7 +169,22 @@ namespace Chutzpah
 
                 var coverageEngine = SetupCodeCoverageEngine(options, chutzpahTestSettings, definition, referencedFiles);
 
-                AddTestFrameworkDependencies(deps, referencedFiles);
+                AddTestFrameworkDependencies(deps, referencedFiles, options, chutzpahTestSettings);
+
+                if (chutzpahTestSettings.UseIISIfAvailable && options.IISOptions != null)
+                {
+                    foreach(var referencedFile in referencedFiles)
+                    {
+                        if (referencedFile.IsLocal 
+                            && referencedFile.Path.ToLower().StartsWith(options.IISOptions.RootDir.ToLower())
+                            && (!referencedFile.IsFileUnderTest || chutzpahTestSettings.TestHarnessReferenceMode != TestHarnessReferenceMode.AMD)
+                            )
+                        {
+                            referencedFile.IsLocal = false;
+                            referencedFile.Path = referencedFile.Path.ToLower().Replace(options.IISOptions.RootDir.ToLower(), options.IISOptions.BaseUri.ToLower() + "/");
+                        }
+                    }
+                }
 
                 var testFiles = referencedFiles.Where(x => x.IsFileUnderTest).Select(x => x.Path).ToList();
                 return new TestContext
@@ -344,13 +359,27 @@ namespace Chutzpah
             return false;
         }
 
-        private void AddTestFrameworkDependencies(IEnumerable<string> deps, List<ReferencedFile> referencedFiles)
+        private void AddTestFrameworkDependencies(IEnumerable<string> deps, List<ReferencedFile> referencedFiles, TestOptions options, ChutzpahTestSettingsFile chutzpahTestSettings)
         {
-            foreach (string item in deps.Reverse())
+            var testFileFolder = chutzpahTestSettings.TestFileFolder ?? Constants.TestFileFolder;
+
+            if (chutzpahTestSettings.UseIISIfAvailable && options.IISOptions != null)
             {
-                string sourcePath = fileProbe.GetPathInfo(Path.Combine(Constants.TestFileFolder, item)).FullPath;
-                ChutzpahTracer.TraceInformation("Added framework dependency '{0}' to referenced files", sourcePath);
-                referencedFiles.Insert(0, new ReferencedFile { IsLocal = true, IsTestFrameworkFile = true, Path = sourcePath, IncludeInTestHarness = true });
+                foreach (string item in deps.Reverse())
+                {
+                    string sourcePath = Path.Combine(options.IISOptions.BaseUri, testFileFolder, item).Replace(@"\", "/");
+                    ChutzpahTracer.TraceInformation("Added framework dependency '{0}' to referenced files (Using IISOptions)", sourcePath);
+                    referencedFiles.Insert(0, new ReferencedFile { IsLocal = false, IsTestFrameworkFile = true, Path = sourcePath, IncludeInTestHarness = true });
+                }
+            }
+            else
+            {
+                foreach (string item in deps.Reverse())
+                {
+                    string sourcePath = fileProbe.GetPathInfo(Path.Combine(testFileFolder, item)).FullPath;
+                    ChutzpahTracer.TraceInformation("Added framework dependency '{0}' to referenced files", sourcePath);
+                    referencedFiles.Insert(0, new ReferencedFile { IsLocal = true, IsTestFrameworkFile = true, Path = sourcePath, IncludeInTestHarness = true });
+                }
             }
         }
 
@@ -364,21 +393,43 @@ namespace Chutzpah
             if (coverageEngine != null)
             {
                 var deps = coverageEngine.GetFileDependencies(definition, chutzpahTestSettings);
+                var testFileFolder = chutzpahTestSettings.TestFileFolder ?? Constants.TestFileFolder;
 
-                foreach (string item in deps)
+                if (chutzpahTestSettings.UseIISIfAvailable && options.IISOptions != null)
                 {
-                    string sourcePath = fileProbe.GetPathInfo(Path.Combine(Constants.TestFileFolder, item)).FullPath;
-                    ChutzpahTracer.TraceInformation(
-                        "Added code coverage dependency '{0}' to referenced files",
-                        sourcePath);
-                    referencedFiles.Add(
-                        new ReferencedFile
-                        {
-                            IsLocal = true,
-                            IsCodeCoverageDependency = true,
-                            Path = sourcePath,
-                            IncludeInTestHarness = true
-                        });
+                    foreach (string item in deps.Reverse())
+                    {
+                        string sourcePath = Path.Combine(options.IISOptions.BaseUri, testFileFolder, item).Replace(@"\", "/");
+                        ChutzpahTracer.TraceInformation(
+                            "Added code coverage dependency '{0}' to referenced files (Using IISOptions)", 
+                            sourcePath);
+                        referencedFiles.Add(
+                            new ReferencedFile
+                            {
+                                IsLocal = false,
+                                IsCodeCoverageDependency = true,
+                                Path = sourcePath,
+                                IncludeInTestHarness = true
+                            });
+                    }
+                }
+                else
+                {
+                    foreach (string item in deps)
+                    {
+                        string sourcePath = fileProbe.GetPathInfo(Path.Combine(testFileFolder, item)).FullPath;
+                        ChutzpahTracer.TraceInformation(
+                            "Added code coverage dependency '{0}' to referenced files",
+                            sourcePath);
+                        referencedFiles.Add(
+                            new ReferencedFile
+                            {
+                                IsLocal = true,
+                                IsCodeCoverageDependency = true,
+                                Path = sourcePath,
+                                IncludeInTestHarness = true
+                            });
+                    }
                 }
             }
             return coverageEngine;

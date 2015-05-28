@@ -27,6 +27,7 @@ namespace Chutzpah
         private readonly ITestContextBuilder testContextBuilder;
         private readonly IChutzpahTestSettingsService testSettingsService;
         private readonly ITransformProcessor transformProcessor;
+        private readonly IIISExpressFactory iisExpressFactory;
         private bool m_debugEnabled;
 
         public static ITestRunner Create(bool debugEnabled = false)
@@ -47,7 +48,8 @@ namespace Chutzpah
                           ITestHarnessBuilder testHarnessBuilder,
                           ITestContextBuilder htmlTestFileCreator,
                           IChutzpahTestSettingsService testSettingsService,
-                          ITransformProcessor transformProcessor)
+                          ITransformProcessor transformProcessor,
+                          IIISExpressFactory iisExpressFactory)
         {
             this.process = process;
             this.testCaseStreamReaderFactory = testCaseStreamReaderFactory;
@@ -58,6 +60,7 @@ namespace Chutzpah
             testContextBuilder = htmlTestFileCreator;
             this.testSettingsService = testSettingsService;
             this.transformProcessor = transformProcessor;
+            this.iisExpressFactory = iisExpressFactory;
         }
 
 
@@ -269,6 +272,20 @@ namespace Chutzpah
             return true;
         }
 
+        private class FakeDisposabe : IDisposable
+        {
+            public void Dispose()
+            {
+            }
+        }
+
+        private IDisposable StartIISExpressIfNeeded(TestOptions options, ChutzpahTestSettingsFile settings)
+        {
+            if (settings.UseIISIfAvailable && options.IISOptions != null && options.IISOptions.CmdLine != null)
+                return iisExpressFactory.Create(options.IISOptions.CmdLine, !options.OpenInBrowser);
+            return new FakeDisposabe();
+        }
+
         private void ExecuteTestContexts(
             TestOptions options,
             TestExecutionMode testExecutionMode,
@@ -285,52 +302,57 @@ namespace Chutzpah
                 testContext =>
                 {
                     ChutzpahTracer.TraceInformation("Start test run for {0} in {1} mode", testContext.FirstInputTestFile, testExecutionMode);
-
+                    var iisServer = StartIISExpressIfNeeded(options, testContext.TestFileSettings);
                     try
                     {
-                        testHarnessBuilder.CreateTestHarness(testContext, options);
-
-                        if (options.OpenInBrowser)
-                        {
-                            ChutzpahTracer.TraceInformation(
-                                "Launching test harness '{0}' for file '{1}' in a browser",
-                                testContext.TestHarnessPath,
-                                testContext.FirstInputTestFile);
-                            process.LaunchFileInBrowser(testContext.TestHarnessPath, options.BrowserName);
-                        }
-                        else
-                        {
-                            ChutzpahTracer.TraceInformation(
-                                "Invoking headless browser on test harness '{0}' for file '{1}'",
-                                testContext.TestHarnessPath,
-                                testContext.FirstInputTestFile);
-
-                            var testSummaries = InvokeTestRunner(
-                                headlessBrowserPath,
-                                options,
-                                testContext,
-                                testExecutionMode,
-                                callback);
-
-                            foreach (var testSummary in testSummaries)
+                            testHarnessBuilder.CreateTestHarness(testContext, options);
+                            if (testContext.TestFileSettings.UseIISIfAvailable && options.IISOptions != null)
                             {
-
-                                ChutzpahTracer.TraceInformation(
-                                    "Test harness '{0}' for file '{1}' finished with {2} passed, {3} failed and {4} errors",
-                                    testContext.TestHarnessPath,
-                                    testSummary.Path,
-                                    testSummary.PassedCount,
-                                    testSummary.FailedCount,
-                                    testSummary.Errors.Count);
-
-                                ChutzpahTracer.TraceInformation(
-                                    "Finished running headless browser on test harness '{0}' for file '{1}'",
-                                    testContext.TestHarnessPath,
-                                    testSummary.Path);
-
-                                testFileSummaries.Enqueue(testSummary);
+                                testContext.TestHarnessPath = testContext.TestHarnessPath.ToLower().Replace(options.IISOptions.RootDir.ToLower(), options.IISOptions.BaseUri.ToLower() + "/").Replace(@"\", "/");
+                                testContext.IsRemoteHarness = true;
                             }
-                        }
+
+                            if (options.OpenInBrowser)
+                            {
+                                ChutzpahTracer.TraceInformation(
+                                    "Launching test harness '{0}' for file '{1}' in a browser",
+                                    testContext.TestHarnessPath,
+                                    testContext.FirstInputTestFile);
+                                process.LaunchFileInBrowser(testContext.TestHarnessPath, options.BrowserName);
+                            }
+                            else
+                            {
+                                ChutzpahTracer.TraceInformation(
+                                    "Invoking headless browser on test harness '{0}' for file '{1}'",
+                                    testContext.TestHarnessPath,
+                                    testContext.FirstInputTestFile);
+
+                                var testSummaries = InvokeTestRunner(
+                                    headlessBrowserPath,
+                                    options,
+                                    testContext,
+                                    testExecutionMode,
+                                    callback);
+
+                                foreach (var testSummary in testSummaries)
+                                {
+
+                                    ChutzpahTracer.TraceInformation(
+                                        "Test harness '{0}' for file '{1}' finished with {2} passed, {3} failed and {4} errors",
+                                        testContext.TestHarnessPath,
+                                        testSummary.Path,
+                                        testSummary.PassedCount,
+                                        testSummary.FailedCount,
+                                        testSummary.Errors.Count);
+
+                                    ChutzpahTracer.TraceInformation(
+                                        "Finished running headless browser on test harness '{0}' for file '{1}'",
+                                        testContext.TestHarnessPath,
+                                        testSummary.Path);
+
+                                    testFileSummaries.Enqueue(testSummary);
+                                }
+                            }
                     }
                     catch (Exception e)
                     {
@@ -347,6 +369,8 @@ namespace Chutzpah
                     }
                     finally
                     {
+                        if (!options.OpenInBrowser)
+                            iisServer.Dispose();
                         ChutzpahTracer.TraceInformation("Finished test run for {0} in {1} mode", testContext.FirstInputTestFile, testExecutionMode);
                     }
                 });

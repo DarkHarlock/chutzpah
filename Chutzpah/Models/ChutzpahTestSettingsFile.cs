@@ -225,6 +225,15 @@ namespace Chutzpah.Models
         /// </summary>
         public ICollection<TransformConfig> Transforms { get; set; }
 
+        /// <summary>
+        /// Enable http url generation during unit testing if tests are inside a WebApplication with a valid IIS or IISExpress configuration
+        /// </summary>
+        public bool UseIISIfAvailable { get; set; }
+
+        /// <summary>
+        /// Folder containing test framework files.
+        /// </summary>
+        public string TestFileFolder { get; set; }
 
         public string SettingsFileName
         {
@@ -322,6 +331,10 @@ namespace Chutzpah.Models
             this.UserAgent = this.UserAgent == null ? parent.UserAgent : this.UserAgent;
             this.EnableTestFileBatching = this.EnableTestFileBatching == null ? parent.EnableTestFileBatching : this.EnableTestFileBatching;
             this.IgnoreResourceLoadingErrors = this.IgnoreResourceLoadingErrors == null ? parent.IgnoreResourceLoadingErrors : this.IgnoreResourceLoadingErrors;
+
+            this.UseIISIfAvailable = this.UseIISIfAvailable ? this.UseIISIfAvailable : parent.UseIISIfAvailable;
+            this.TestFileFolder = string.IsNullOrWhiteSpace(this.TestFileFolder) ? parent.TestFileFolder : this.TestFileFolder;
+            if (string.IsNullOrWhiteSpace(this.TestFileFolder)) this.TestFileFolder = null;
 
             // Deprecated
             this.AMDBasePath = this.AMDBasePath == null ? parent.AMDBasePath : this.AMDBasePath;

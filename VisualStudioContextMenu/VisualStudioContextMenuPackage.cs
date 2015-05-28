@@ -37,7 +37,7 @@ namespace Chutzpah.VisualStudioContextMenu
     [PackageRegistration(UseManagedResourcesOnly = true)]
     // This attribute is used to register the informations needed to show the this package
     // in the Help/About dialog of Visual Studio.
-    [InstalledProductRegistration("#110", "#112",  Constants.ChutzpahVersion, IconResourceID = 400)]
+    [InstalledProductRegistration("#110", "#112", Constants.ChutzpahVersion, IconResourceID = 400)]
     [ProvideOptionPage(typeof(ChutzpahSettings), "Chutzpah", "Chutzpah Settings", 110, 113, true)]
     // This attribute is needed to let the shell know that this package exposes some menus.
     [ProvideMenuResource("Menus.ctmenu", 1)]
@@ -129,7 +129,7 @@ namespace Chutzpah.VisualStudioContextMenu
             this.solutionListener.SolutionUnloaded += OnSolutionUnloaded;
             this.solutionListener.SolutionProjectChanged += OnSolutionProjectChanged;
             this.solutionListener.StartListeningForChanges();
-                
+
         }
 
         private void InitializeSettingsFileEnvironments()
@@ -202,6 +202,90 @@ namespace Chutzpah.VisualStudioContextMenu
             return TestFileType.Other;
         }
 
+        private IISOptions GetIISProjectCapability()
+        {
+            EnvDTE.Project project = null;
+            var activeWindow = dte.ActiveWindow;
+            if (activeWindow.ObjectKind == DTEConstants.vsWindowKindSolutionExplorer)
+            {
+                var item = SolutionExplorerItems.OfType<UIHierarchyItem>().First();
+                project = item.Object as EnvDTE.Project;
+                if (project == null)
+                {
+                    var pi = item.Object as EnvDTE.ProjectItem;
+                    if (pi != null)
+                        project = pi.ContainingProject;
+                }
+            }
+            else if (activeWindow.Kind == "Document")
+            {
+                if (dte.ActiveWindow.Document.ProjectItem != null && dte.ActiveWindow.Document.ProjectItem.ContainingProject != null)
+                project = dte.ActiveWindow.Document.ProjectItem.ContainingProject;
+            }
+
+            if (project == null) return null;
+            var isWeb = ProjectHasExtender(project, "WebApplication");
+            if (!isWeb) return null;
+
+            DumpProperties(project);
+
+            var useIIS = GetProperty<bool>(project, "WebApplication.UseIIS");
+            var useIISExpress = GetProperty<bool>(project, "WebApplication.IsUsingIISExpress");
+            string cmdLine = null;
+            if (useIISExpress)
+                cmdLine = GetProperty<string>(project, "WebApplication.DevelopmentServerCommandLine");
+
+            var localPath = GetProperty<string>(project, "LocalPath");
+            var browseUrl = GetProperty<string>(project, "WebApplication.BrowseURL");
+
+            return new IISOptions()
+            {
+                BaseUri = browseUrl,
+                RootDir = localPath,
+                CmdLine = cmdLine
+            };
+        }
+
+        private void DumpProperties(EnvDTE.Project proj)
+        {
+            var obj = new Object();
+            foreach (var property in proj.Properties.OfType<EnvDTE.Property>())
+            {
+                string value = null;
+                try { value = (property.Value ?? obj).ToString(); }
+                catch { }
+                Debug.WriteLine("Found property with name: <{0}> and value <{1}>", property.Name, value);
+            }
+        }
+
+        private T GetProperty<T>(EnvDTE.Project proj, string attributeName)
+        {
+            try
+            {
+                return (T)proj.Properties.Item(attributeName).Value;
+            }
+            catch
+            {
+                return default(T);
+            }
+        }
+
+        private bool ProjectHasExtender(EnvDTE.Project proj, string extenderName)
+        {
+            // See http://www.mztools.com/articles/2007/mz2007014.aspx for more information.
+            try
+            {
+                // We could use proj.Extender(extenderName) but it causes an exception if not present and 
+                // therefore it can cause performance problems if called multiple times. We use instead:
+                var extenderNames = (object[])proj.ExtenderNames;
+                return extenderNames.Length > 0 && extenderNames.Any(extenderNameObject => extenderNameObject.ToString() == extenderName);
+            }
+            catch
+            {
+                // Ignore
+            }
+            return false;
+        }
         private void RunJSTestInBrowserCmdCallback(object sender, EventArgs e)
         {
             CheckTracing();
@@ -349,6 +433,8 @@ namespace Chutzpah.VisualStudioContextMenu
                         var solutionDir = Path.GetDirectoryName(dte.Solution.FullName);
                         testingInProgress = true;
 
+                        var iisOptions = GetIISProjectCapability();
+
                         Task.Factory.StartNew(
                             () =>
                             {
@@ -368,10 +454,11 @@ namespace Chutzpah.VisualStudioContextMenu
                                                               Enabled = withCodeCoverage
                                                           },
                                                           OpenInBrowser = openInBrowser,
-                                                          ChutzpahSettingsFileEnvironments = settingsEnvironments
+                                                          ChutzpahSettingsFileEnvironments = settingsEnvironments,
+                                                          IISOptions = iisOptions
                                                       };
                                     var result = testRunner.RunTests(filePaths, options, runnerCallback);
- 
+
                                     if (result.CoverageObject != null)
                                     {
                                         var path = CoverageOutputGenerator.WriteHtmlFile(solutionDir, result.CoverageObject);

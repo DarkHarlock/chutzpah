@@ -4,6 +4,13 @@ using Chutzpah.Models;
 
 namespace Chutzpah
 {
+    public class IISOptions
+    {
+        public string CmdLine { get; set; }
+        public string RootDir { get; set; }
+        public string BaseUri { get; set; }
+    }
+
     public class TestOptions
     {
         private int testFileTimeoutMilliseconds;
@@ -32,7 +39,9 @@ namespace Chutzpah
         /// The name of browser which will be opened when OpenInBrowser is enabled, this value is optional
         /// </summary>
         public string BrowserName { get; set; }
-        
+
+        public IISOptions IISOptions { get; set; }
+
         /// <summary>
         /// The time to wait for the tests to compelte in milliseconds
         /// </summary>
