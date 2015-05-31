@@ -40,7 +40,18 @@ namespace Chutzpah
         /// </summary>
         public string BrowserName { get; set; }
 
+        /// <summary>
+        /// Options for IIS automation. 
+        /// If this value is null there will no IIS integration
+        /// If this value is not null RootDir and BaseDir are required and used to translate file path to IIS vdir
+        /// If this value is not null and CmdLine is not null IISExpress will be started during tests with that cmdline value
+        /// </summary>
         public IISOptions IISOptions { get; set; }
+
+        /// <summary>
+        /// Callback with IE pid started in debug mode
+        /// </summary>
+        public Action<int> OnDebuggableIEStart { get; set; }
 
         /// <summary>
         /// The time to wait for the tests to compelte in milliseconds

@@ -7,6 +7,8 @@ using Chutzpah.Models;
 using Chutzpah.Utility;
 using Chutzpah.Wrappers;
 using Microsoft.Win32;
+using System.Management;
+using System.Runtime.InteropServices;
 
 namespace Chutzpah
 {
@@ -40,7 +42,7 @@ namespace Chutzpah
         public BatchCompileResult RunBatchCompileProcess(BatchCompileConfiguration compileConfiguration)
         {
             ChutzpahTracer.TraceInformation("Started batch compile using {0} with args {1}", compileConfiguration.Executable, compileConfiguration.Arguments);
-            
+
             var timeout = compileConfiguration.Timeout.Value;
             var p = new Process();
             // Append path to where .net drop is so you can use things like msbuild
@@ -88,7 +90,7 @@ namespace Chutzpah
                 p.Start();
                 p.BeginOutputReadLine();
                 p.BeginErrorReadLine();
-                
+
                 if (p.WaitForExit(timeout) &&
                     outputWaitHandle.WaitOne(timeout) &&
                     errorWaitHandle.WaitOne(timeout))
@@ -126,6 +128,20 @@ namespace Chutzpah
             }
 
             Process.Start(startInfo);
+        }
+
+        public void LaunchIEForDebug(string file, Action<int> onBrowserProcessStart)
+        {
+            var browserAppPath = BrowserPathHelper.GetBrowserPath("ie");
+            var cmdLine = "-noframemerging -debug -suspended " + file;
+            var startInfo = new ProcessStartInfo
+            {
+                UseShellExecute = true,
+                FileName = browserAppPath,
+                Arguments = cmdLine
+            };
+            var p = Process.Start(startInfo);
+            onBrowserProcessStart(p.Id);
         }
     }
 }

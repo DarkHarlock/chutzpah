@@ -272,7 +272,7 @@ namespace Chutzpah
             return true;
         }
 
-        private class FakeDisposabe : IDisposable
+        private class FakeDisposable : IDisposable
         {
             public void Dispose()
             {
@@ -283,7 +283,7 @@ namespace Chutzpah
         {
             if (settings.UseIISIfAvailable && options.IISOptions != null && options.IISOptions.CmdLine != null)
                 return iisExpressFactory.Create(options.IISOptions.CmdLine, !options.OpenInBrowser);
-            return new FakeDisposabe();
+            return new FakeDisposable();
         }
 
         private void ExecuteTestContexts(
@@ -305,54 +305,57 @@ namespace Chutzpah
                     var iisServer = StartIISExpressIfNeeded(options, testContext.TestFileSettings);
                     try
                     {
-                            testHarnessBuilder.CreateTestHarness(testContext, options);
-                            if (testContext.TestFileSettings.UseIISIfAvailable && options.IISOptions != null)
-                            {
-                                testContext.TestHarnessPath = testContext.TestHarnessPath.ToLower().Replace(options.IISOptions.RootDir.ToLower(), options.IISOptions.BaseUri.ToLower() + "/").Replace(@"\", "/");
-                                testContext.IsRemoteHarness = true;
-                            }
+                        testHarnessBuilder.CreateTestHarness(testContext, options);
+                        if (testContext.TestFileSettings.UseIISIfAvailable && options.IISOptions != null)
+                        {
+                            testContext.TestHarnessPath = testContext.TestHarnessPath.ToLower().Replace(options.IISOptions.RootDir.ToLower(), options.IISOptions.BaseUri.ToLower() + "/").Replace(@"\", "/");
+                            testContext.IsRemoteHarness = true;
+                        }
 
-                            if (options.OpenInBrowser)
-                            {
-                                ChutzpahTracer.TraceInformation(
-                                    "Launching test harness '{0}' for file '{1}' in a browser",
-                                    testContext.TestHarnessPath,
-                                    testContext.FirstInputTestFile);
-                                process.LaunchFileInBrowser(testContext.TestHarnessPath, options.BrowserName);
-                            }
+                        if (options.OpenInBrowser)
+                        {
+                            ChutzpahTracer.TraceInformation(
+                                "Launching test harness '{0}' for file '{1}' in a browser",
+                                testContext.TestHarnessPath,
+                                testContext.FirstInputTestFile);
+                            if (options.BrowserName == "ie" && options.OnDebuggableIEStart != null)
+                                process.LaunchIEForDebug(testContext.TestHarnessPath, options.OnDebuggableIEStart);
                             else
+                                process.LaunchFileInBrowser(testContext.TestHarnessPath, options.BrowserName);
+                        }
+                        else
+                        {
+                            ChutzpahTracer.TraceInformation(
+                                "Invoking headless browser on test harness '{0}' for file '{1}'",
+                                testContext.TestHarnessPath,
+                                testContext.FirstInputTestFile);
+
+                            var testSummaries = InvokeTestRunner(
+                                headlessBrowserPath,
+                                options,
+                                testContext,
+                                testExecutionMode,
+                                callback);
+
+                            foreach (var testSummary in testSummaries)
                             {
+
                                 ChutzpahTracer.TraceInformation(
-                                    "Invoking headless browser on test harness '{0}' for file '{1}'",
+                                    "Test harness '{0}' for file '{1}' finished with {2} passed, {3} failed and {4} errors",
                                     testContext.TestHarnessPath,
-                                    testContext.FirstInputTestFile);
+                                    testSummary.Path,
+                                    testSummary.PassedCount,
+                                    testSummary.FailedCount,
+                                    testSummary.Errors.Count);
 
-                                var testSummaries = InvokeTestRunner(
-                                    headlessBrowserPath,
-                                    options,
-                                    testContext,
-                                    testExecutionMode,
-                                    callback);
+                                ChutzpahTracer.TraceInformation(
+                                    "Finished running headless browser on test harness '{0}' for file '{1}'",
+                                    testContext.TestHarnessPath,
+                                    testSummary.Path);
 
-                                foreach (var testSummary in testSummaries)
-                                {
-
-                                    ChutzpahTracer.TraceInformation(
-                                        "Test harness '{0}' for file '{1}' finished with {2} passed, {3} failed and {4} errors",
-                                        testContext.TestHarnessPath,
-                                        testSummary.Path,
-                                        testSummary.PassedCount,
-                                        testSummary.FailedCount,
-                                        testSummary.Errors.Count);
-
-                                    ChutzpahTracer.TraceInformation(
-                                        "Finished running headless browser on test harness '{0}' for file '{1}'",
-                                        testContext.TestHarnessPath,
-                                        testSummary.Path);
-
-                                    testFileSummaries.Enqueue(testSummary);
-                                }
+                                testFileSummaries.Enqueue(testSummary);
                             }
+                        }
                     }
                     catch (Exception e)
                     {

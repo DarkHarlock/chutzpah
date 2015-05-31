@@ -19,6 +19,8 @@ using Task = System.Threading.Tasks.Task;
 using Chutzpah.Coverage;
 using Microsoft.Build.Evaluation;
 using Chutzpah.Models;
+using System.Collections;
+using System.Management;
 
 namespace Chutzpah.VisualStudioContextMenu
 {
@@ -122,6 +124,11 @@ namespace Chutzpah.VisualStudioContextMenu
                 runJsTestCodeCoverageMenuCmd.BeforeQueryStatus += RunCodeCoverageCmdQueryStatus;
                 mcs.AddCommand(runJsTestCodeCoverageMenuCmd);
 
+                // Command - Run JS tests in browser
+                var runJsTestsInIEWithDebuggerCmd = new CommandID(GuidList.guidChutzpahCmdSet, (int)PkgCmdIDList.cmdidRunInIEWithDebugger);
+                var runJsTestInIEWithDebuggerMenuCmd = new OleMenuCommand(RunJSTestInIEWithDebuggerCmdCallback, runJsTestsInIEWithDebuggerCmd);
+                runJsTestInIEWithDebuggerMenuCmd.BeforeQueryStatus += RunJSTestsInBrowserCmdQueryStatus;
+                mcs.AddCommand(runJsTestInIEWithDebuggerMenuCmd);
             }
 
 
@@ -220,14 +227,14 @@ namespace Chutzpah.VisualStudioContextMenu
             else if (activeWindow.Kind == "Document")
             {
                 if (dte.ActiveWindow.Document.ProjectItem != null && dte.ActiveWindow.Document.ProjectItem.ContainingProject != null)
-                project = dte.ActiveWindow.Document.ProjectItem.ContainingProject;
+                    project = dte.ActiveWindow.Document.ProjectItem.ContainingProject;
             }
 
             if (project == null) return null;
             var isWeb = ProjectHasExtender(project, "WebApplication");
             if (!isWeb) return null;
 
-            DumpProperties(project);
+            //DumpProperties(project);
 
             var useIIS = GetProperty<bool>(project, "WebApplication.UseIIS");
             var useIISExpress = GetProperty<bool>(project, "WebApplication.IsUsingIISExpress");
@@ -246,15 +253,55 @@ namespace Chutzpah.VisualStudioContextMenu
             };
         }
 
-        private void DumpProperties(EnvDTE.Project proj)
+        //private void DumpProperties(EnvDTE.Project proj)
+        //{
+        //    var obj = new object();
+        //    foreach (var property in proj.Properties.OfType<EnvDTE.Property>())
+        //    {
+        //        string value = null;
+        //        try { value = (property.Value ?? obj).ToString(); }
+        //        catch { }
+        //        Debug.WriteLine("Found property with name: <{0}> and value <{1}>", property.Name, value);
+        //    }
+        //}
+
+        private void AttachToProcess(int pid)
         {
-            var obj = new Object();
-            foreach (var property in proj.Properties.OfType<EnvDTE.Property>())
+            var debugProcess = System.Diagnostics.Process.GetProcessById(pid);
+            var changed = false;
+            while (!changed)
             {
-                string value = null;
-                try { value = (property.Value ?? obj).ToString(); }
-                catch { }
-                Debug.WriteLine("Found property with name: <{0}> and value <{1}>", property.Name, value);
+                System.Threading.Thread.Sleep(1000);
+                using (var searcher = new ManagementObjectSearcher("SELECT ProcessId, CommandLine FROM Win32_Process"))
+                {
+                    foreach (var @object in searcher.Get())
+                    {
+                        var obj = @object["CommandLine"];
+                        if (obj == null) continue;
+                        var cline = obj.ToString().ToLower();
+                        if (cline.Contains("iexplore.exe") && cline.Contains("scodef:" + pid))
+                        {
+                            debugProcess = System.Diagnostics.Process.GetProcessById((int)((uint)@object["ProcessId"]));
+                            changed = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            var debugger = dte.Debugger as EnvDTE80.Debugger2;
+            var transport = debugger.Transports.Item("Default");
+            var engine = transport.Engines.Item("Script");
+
+            IEnumerable processes = debugger.LocalProcesses;
+            foreach (EnvDTE80.Process2 proc in processes)
+            {
+                int spid = proc.ProcessID;
+                if (spid == debugProcess.Id)
+                {
+                    proc.Attach2(engine);
+                    debugProcess.Resume();
+                    break;
+                }
             }
         }
 
@@ -304,7 +351,24 @@ namespace Chutzpah.VisualStudioContextMenu
 
             RunTests(selectedFiles, false, true);
         }
+        private void RunJSTestInIEWithDebuggerCmdCallback(object sender, EventArgs e)
+        {
+            CheckTracing();
 
+            IEnumerable<string> selectedFiles = null;
+            var activeWindow = dte.ActiveWindow;
+            if (activeWindow.ObjectKind == DTEConstants.vsWindowKindSolutionExplorer)
+            {
+                // We only support one file for opening in browser through VS for now
+                selectedFiles = SearchForTestableFiles().Take(1);
+            }
+            else if (activeWindow.Kind == "Document")
+            {
+                selectedFiles = new List<string> { CurrentDocumentPath };
+            }
+
+            RunTests(selectedFiles, false, true, true);
+        }
         private void RunJSTestCmdCallback(object sender, EventArgs e)
         {
             CheckTracing();
@@ -421,7 +485,7 @@ namespace Chutzpah.VisualStudioContextMenu
             }
         }
 
-        private void RunTests(IEnumerable<string> filePaths, bool withCodeCoverage, bool openInBrowser)
+        private void RunTests(IEnumerable<string> filePaths, bool withCodeCoverage, bool openInBrowser, bool attachDebugger = false)
         {
             if (!testingInProgress)
             {
@@ -446,6 +510,14 @@ namespace Chutzpah.VisualStudioContextMenu
                                         InitializeSettingsFileEnvironments();
                                     }
 
+                                    var debugCallback = attachDebugger ? (Action<int>)(pid =>
+                                                             {
+                                                                 if (attachDebugger)
+                                                                 {
+                                                                     AttachToProcess(pid);
+                                                                 }
+
+                                                             }) : null;
                                     var options = new TestOptions
                                                       {
                                                           MaxDegreeOfParallelism = Settings.MaxDegreeOfParallelism,
@@ -455,7 +527,9 @@ namespace Chutzpah.VisualStudioContextMenu
                                                           },
                                                           OpenInBrowser = openInBrowser,
                                                           ChutzpahSettingsFileEnvironments = settingsEnvironments,
-                                                          IISOptions = iisOptions
+                                                          IISOptions = iisOptions,
+                                                          BrowserName = attachDebugger ? "ie" : null,
+                                                          OnDebuggableIEStart = debugCallback
                                                       };
                                     var result = testRunner.RunTests(filePaths, options, runnerCallback);
 
